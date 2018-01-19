@@ -2,9 +2,7 @@
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 import time
-import os
 import json
 
 selfProfile = "https://mbasic.facebook.com/profile.php?fref=pb"
@@ -90,34 +88,18 @@ class Post():
         return self.__str__()
 
 
-dcap = dict(DesiredCapabilities.PHANTOMJS)
-dcap["phantomjs.page.settings.userAgent"] = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/53 "
-    "(KHTML, like Gecko) Chrome/15.0.87"
-)
-
-
-class FacebookBot(webdriver.PhantomJS):
+class FacebookBot(webdriver.Chrome):
     """Main class for browsing facebook"""
 
-    def __init__(self):
-        # pathToPhantomJs ="
-        """relativePhatomJs = "\\phantomjs.exe"
-        service_args = None
-        if images == False:
-            service_args = ['--load-images=no', ]
-        if pathToPhantomJs == None:
-            path = self, os.getcwd() + relativePhatomJs
-        else:
-            path = pathToPhantomJs
-            webdriver.PhantomJS.__init__(self, path, service_args=service_args)
-        """
-        webdriver.PhantomJS.__init__(self, desired_capabilities=dcap)
+    def __init__(self, pathToWebdriver='/usr/local/bin/chrome'):
+        self.pathToWebdriver = pathToWebdriver
+        options = webdriver.ChromeOptions()
+        options.add_argument('headless')
+        webdriver.Chrome.__init__(self, executable_path=pathToWebdriver, chrome_options=options)
 
     def get(self, url):
         """The make the driver go to the url but reformat the url if is for facebook page"""
         super().get(mfacebookToBasic(url))
-        self.save_screenshot("Debug.png")
 
     def login(self, email, password):
         """Log to facebook using email (str) and password (str)"""
@@ -129,6 +111,8 @@ class FacebookBot(webdriver.PhantomJS):
         pass_element = self.find_element_by_name("pass")
         pass_element.send_keys(password)
         pass_element.send_keys(Keys.ENTER)
+        if self.find_element_by_class_name("bi"):
+            self.find_element_by_class_name("bp").click();
         try:
             self.find_element_by_name("xc_message")
             print("Logged in")
@@ -415,98 +399,44 @@ class FacebookBot(webdriver.PhantomJS):
                     print("Fail to send request to: ", r)
         return g
 
-    def getPostInProfile(
-        self,
-        profileURL,
-        deep=100,
-        moreText="Mostrar",
-        sharedText=(
-            "shared",
-            "comparti",
-            "compartio")):
+    def getPostInProfile(self, profileURL, moreText="Mostrar"):
         """Return a list of Posts in a profile/fanpage , setup the "moreText" using your language, theres not elegant way to handle that"""
-        pList = list()
-        self.get(profileURL)
-        # DEEP1
-        n = 0
-        for d in range(deep):
-            try:
-                for i in (3, 4, 5, 6, 7):
+        posts_list = list()
+        url = '{}?v=timeline'.format(profileURL)
+        self.get(url)
+
+        years_elements = self.find_elements_by_xpath("//div[@class='h']/a[contains(., '20')]")
+        years = [y.text for y in years_elements]
+        years.append('9999')  # append one dummy year for the extraction of the last year in the list
+
+        for year in years:
+            more_button_exists = True
+            while more_button_exists:
+                try:
+                    articles = self.find_elements_by_xpath("//div[@role='article']")
+                    for article in articles:
+                        try:
+                            posts_list.append(str(article.text))
+                        except Exception as e:
+                            print("ERROR: " + str(e))
+
+                    # press more if more button exists
                     try:
-                        e = self.find_element_by_id("u_0_" + str(i))
-                        tU = str(e.text)
-                    except Exception:
-                        continue
-                    try:
-                        tspl = tU.split(self.title)[1].split("\n")[:-3]
-                    except IndexError:
-                        continue
-                    tFi = ""
-                    for k in tspl:
-                        tFi += k
-                    if sharedText[0] in tFi or sharedText[1] in tFi or sharedText[2] in tFi:
-                        continue
-                    if tFi not in pList:
-                        pList.append(tFi)
-                        n += 1
-                        print(n, "-\n", tFi)
-                    else:
-                        continue
-                # press more
+                        show_more_link_element = self.find_element_by_partial_link_text(moreText)
+                        show_more_link = show_more_link_element.get_attribute('href')
+                        self.get(show_more_link)
+                    except NoSuchElementException:
+                        # if more button does not exist go to the next year
+                        more_button_exists = False
+                        if year is not '9999':
+                            year_link_element = self.find_element_by_xpath("//div[@class='h']/a[text()='{}']".format(year))
+                            year_link = year_link_element.get_attribute('href')
+                            self.get(year_link)
 
-                al = self.find_element_by_partial_link_text(moreText)
-                link = al.get_attribute('href')
-                self.get(link)
-            except BaseException:
-                pass
-        return pList
-    def getAlbums(self,profileURL):
-    	self.get(profileURL+"/photos/?refid=17")
-    	more=bot.find_element_by_class_name("cb")
-    	self.get(more.find_element_by_tag_name("a").get_attribute('href'))
-    	a=bot.find_elements_by_class_name("t")
-    	alb=dict()
-    	for aa in a:
-    		alb[aa.text]=aa.find_element_by_tag_name("a").get_attribute('href')
-    	#print(alb)
-    	return alb
-    def getPhotosFromAlbum(self,albumURL,direction=1, deep=20):# direction 1= next, -1= previus
-    	self.get(albumURL)
-    	first=self.find_element_by_id("thumbnail_area")
-    	self.get(first.find_element_by_tag_name("a").get_attribute('href'))
-    	imagesURL=list()
-    	tags=["bz","by","ca"]
-    	truenames=list()
-    	for n in range(deep):
-    		print(self.title," - photo...",n+1)
-    		try:
-    			for t in tags:
-    				imageurl=self.find_elements_by_class_name(t)[0].get_attribute('href')
-    				if imageurl != None:
-    					#print(imageurl)
-    					break
-    		except:
-    			print(self.current_url)
-    			return
-    		
-    		truename=imageurl.split("?")[0].split("/")[-1]
-    		if truename in truenames:
-    			print("Repeated...")
-    			break
-    		truenames.append(truename)
+                except TimeoutError as e:
+                    print("Timeout:", str(e))
+                    time.sleep(1)
+                except BaseException as e:
+                    print("ERROR:", str(e))
 
-    		imagesURL.append(imageurl)
-    		td=self.find_elements_by_tag_name("td")
-    		previusURL=td[0].find_element_by_tag_name("a").get_attribute('href')
-    		nextURL=td[1].find_element_by_tag_name("a").get_attribute('href')
-    		#print(nextURL)
-    		#print(previusURL)
-    		if direction==1:
-    			#print("Next")
-    			self.get(nextURL)
-    		elif direcction==-1:
-    			#print("Previous")
-    			self.get(previusURL)
-    		#print(n,"-   ",imageurl)
-    	return imagesURL
-
+        return posts_list
