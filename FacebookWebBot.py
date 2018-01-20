@@ -4,6 +4,7 @@ from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.keys import Keys
 import time
 import json
+import click
 
 selfProfile = "https://mbasic.facebook.com/profile.php?fref=pb"
 
@@ -409,34 +410,35 @@ class FacebookBot(webdriver.Chrome):
         years = [y.text for y in years_elements]
         years.append('9999')  # append one dummy year for the extraction of the last year in the list
 
-        for year in years:
-            more_button_exists = True
-            while more_button_exists:
-                try:
-                    articles = self.find_elements_by_xpath("//div[@role='article']")
-                    for article in articles:
-                        try:
-                            posts_list.append(str(article.text))
-                        except Exception as e:
-                            print("ERROR: " + str(e))
-
-                    # press more if more button exists
+        with click.progressbar(years, label='Scraping {} years'.format(len(years)), show_eta=False) as bar:
+            for year in bar:
+                more_button_exists = True
+                while more_button_exists:
                     try:
-                        show_more_link_element = self.find_element_by_partial_link_text(moreText)
-                        show_more_link = show_more_link_element.get_attribute('href')
-                        self.get(show_more_link)
-                    except NoSuchElementException:
-                        # if more button does not exist go to the next year
-                        more_button_exists = False
-                        if year is not '9999':
-                            year_link_element = self.find_element_by_xpath("//div[@class='h']/a[text()='{}']".format(year))
-                            year_link = year_link_element.get_attribute('href')
-                            self.get(year_link)
+                        articles = self.find_elements_by_xpath("//div[@role='article']")
+                        for article in articles:
+                            try:
+                                posts_list.append(str(article.text))
+                            except Exception as e:
+                                print("ERROR: " + str(e))
 
-                except TimeoutError as e:
-                    print("Timeout:", str(e))
-                    time.sleep(1)
-                except BaseException as e:
-                    print("ERROR:", str(e))
+                        # press more if more button exists
+                        try:
+                            show_more_link_element = self.find_element_by_partial_link_text(moreText)
+                            show_more_link = show_more_link_element.get_attribute('href')
+                            self.get(show_more_link)
+                        except NoSuchElementException:
+                            # if more button does not exist go to the next year
+                            more_button_exists = False
+                            if year is not '9999':
+                                year_link_element = self.find_element_by_xpath("//div[@class='h']/a[text()='{}']".format(year))
+                                year_link = year_link_element.get_attribute('href')
+                                self.get(year_link)
+
+                    except TimeoutError as e:
+                        print("Timeout:", str(e))
+                        time.sleep(1)
+                    except BaseException as e:
+                        print("ERROR:", str(e))
 
         return posts_list
