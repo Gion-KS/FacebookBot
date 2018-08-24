@@ -7,12 +7,13 @@ import json
 import datetime
 import urllib.parse as urlparse
 from urllib.parse import urlencode
+import urllib
 
 selfProfile = "https://mbasic.facebook.com/profile.php?fref=pb"
 
 def mfacebookToBasic(url):
-    """Reformat a url to load mbasic facebook instead of regular facebook, return the same string if
-    the url don't contains facebook"""
+    """Reformat a url to load mbasic facebook instead of regular facebook, 
+    return the same string if the url don't contains facebook"""
 
     if "m.facebook.com" in url:
         return url.replace("m.facebook.com", "mbasic.facebook.com")
@@ -20,6 +21,65 @@ def mfacebookToBasic(url):
         return url.replace("www.facebook.com", "mbasic.facebook.com")
     else:
         return url
+
+def facebookDateTimeConverter(date_string):
+    """ Function to convert strings containing date from facebook and convert
+    them to datetime format. 
+    Function is language dependent and currently implemented for Swedish. 
+
+    Does not cover : 
+    * 1å (1 year), 
+    * 10d (10 days)
+    * 1 jan
+    """
+    now = datetime.datetime.now()
+    # remove microseconds for compability with mysql
+    now = now.replace(microsecond=0)
+    months_of_the_year = ['januari','februari','mars','april','maj','juni',\
+    'juli','augusti','september','oktober','november','december']
+
+
+    if('tim' in date_string or ' h' in date_string):
+        if(len(date_string.split(' ')) > 2):
+            # longer format -- e.g. "för 6 timmar sedan"
+            hours_ago = int(date_string.split(' ')[1])
+        else:
+            # short format -- eg. "6 tim" or "6 h"
+            hours_ago = int(date_string.split(' ')[0])
+        date = now-datetime.timedelta(hours=hours_ago)
+    elif('Alldeles nyss' in date_string):
+        date = now
+    elif('min' in date_string):
+        if(len(date_string.split(' ')) > 2):
+            # longer format -- e.g. "för 6 timmar sedan"
+            minutes_ago = int(date_string.split(' ')[1])
+        else:
+            # short format -- eg. 6 tim
+            minutes_ago = int(date_string.split(' ')[0])
+        date = now-datetime.timedelta(minutes=minutes_ago)
+    elif("Igår" in date_string): 
+        # Yesterday
+        hour = int(date_string.split(' ')[2].split(':')[0])
+        minute = int(date_string.split(' ')[2].split(':')[1])
+        dateholder = datetime.datetime(year=now.year, month=now.month,\
+        day=now.day, hour=hour, minute=minute )
+        date = dateholder-datetime.timedelta(hours = 24)
+    else:
+        day = int(date_string.split(' ')[0])
+        month = months_of_the_year.index(date_string.split(' ')[1])+1
+        if(len(date_string.split(' ')) > 4): 
+           # posts from other years than the current one have the year in 
+           # the string
+           year = int(date_string.split(' ')[2])
+        else:
+            # posts from this year does not have the year in the string
+            year = now.year 
+        time = date_string.split('kl. ')[1]
+        hour = int(time.split(':')[0])
+        minute = int(time.split(':')[1])
+        date = datetime.datetime(year=year, month=month, day=day, hour=hour,\
+        minute=minute)
+    return date
 
 class Profile():
     """Basic class for people's profiles"""
@@ -35,7 +95,7 @@ class Profile():
         return s
 
     def __repr__(self):
-        self.__str__()
+        return self.__str__()
 
 class Post():
     """Class to contain information about a post"""
@@ -44,7 +104,9 @@ class Post():
         self.posterName = ""
         self.text = ""
         self.numLikes = 0
-        self.time = ""
+        self.time = None
+        # timetext for debugging
+        self.timetext = ""
         self.privacy = ""
         self.posterLink = ""
         self.linkToComment = ""
@@ -54,11 +116,14 @@ class Post():
         self.groupLink = ""
         self.linkToShare = ""
         self.linkToMore = ""
-        self.numComents = 0
+        self.numComments = 0
         self.postId = 0
         self.commentId = 0
         self.subCommentId = 0
         self.pageId = 0
+        self.images = []
+        self.originalContentId = 0
+        self.isShare = 0
 
         # possibly replace text with message and story
         self.message = ""
@@ -74,14 +139,16 @@ class Post():
         self.fromDict(json.loads(j))
 
     def to_json(self):
-        return json.dumps(self.toDict())
+        # "default = str" converts datetime in time to str. bc of serialzation
+        return json.dumps(self.toDict(), default=str)
 
     def __str__(self):
         s = "\nPost by " + self.posterName + ": "
+        s += " - Story: " + self.story + "\n-"
         s += self.text + "\n"
         s += "Likes: " + str(self.numLikes) + " - "
-        s += "Comments: " + str(self.numComents) + " - "
-        s += self.time + " "
+        s += "Comments: " + str(self.numComments) + " - "
+        s += str(self.time) + " "
         s += " - Privacy: " + self.privacy + "\n-"
         s += "\n Comment -> " + self.linkToComment + "\n"
         return s
@@ -137,7 +204,7 @@ class FacebookBot(webdriver.Chrome):
 
     def logout(self):
         """Log out from Facebook"""
-        # seems to be not working
+        #  TODO: seems to be not working
 
         url = "https://mbasic.facebook.com/logout.php?h=AffSEUYT5RsM6bkY&t=1446949608&ref_component=mbasic_footer&ref_page=%2Fwap%2Fhome.php&refid=7"
         try:
@@ -148,62 +215,20 @@ class FacebookBot(webdriver.Chrome):
             return False
 
     def getPostInGroup(self, url, deep=2, moreText="Visa fler"):
-        """Get a list of posts (list:Post) in group url(str) iterating deep(int) times in the group
-        pass moreText depending of your language, i couldn't find a elegant solution for this"""
+        """Get a list of posts (list:Post) in group url(str) iterating 
+        deep(int) times in the group
+        pass moreText depending of your language, i couldn't find a elegant 
+        solution for this"""
 
         self.get(url)
         posts = []
         for n in range(deep):
             print("Searching, deep ",n)
-            post = Post()
             articles = self.find_elements_by_xpath("//div[@role='article']")
             for article in articles:
-                print(articles.index(article))
-                post = Post()
-                p = article
-                #print(p.text)
-                a = p.find_elements_by_tag_name("a")
-                post.posterName = a[0].text
-                try:
-                    #post.numLikes = int(a[3].text.split(" ")[0])
-                    post.numLikes = p.find_element_by_xpath("//a[contains(@aria-label, 'reaktioner, inklusive')]").text
-                except ValueError:
-                    post.numLikes = 0
-                try: 
-                    post.text = p.find_element_by_tag_name("p").text
-                except NoSuchElementException:
-                    post.text = ''
-                try:
-                    post.time = p.find_element_by_tag_name("abbr").text
-                except NoSuchElementException:
-                    post.time = '' 
-                # p.text.split("· ")[1].split("\n")[0]
-                post.privacy = self.title
-                post.posterLink = a[0].get_attribute('href')
-                # p.find_element_by_class_name("du").get_attribute('href')
-                post.linkToComment = a[2].get_attribute('href')
-                try:
-                    post.linkToLike = a[4].get_attribute('href')
-                except IndexError: 
-                    post.linkToLike = ''
-                try:
-                    post.numComents = int(a[5].text.split(" ")[0])
-                except ValueError:
-                    post.numComents = 0
-                except IndexError: 
-                    post.numComents = 0
-                # post.linkToShare = a[5].get_attribute('href')
-                post.linkToLikers = a[1].get_attribute('href')
-                try:
-                    #post.linkToMore = a[6].get_attribute('href') 
-                    post.linkToMore = p.find_element_by_link_text('Visa hela händelsen').get_attribute("href")
-                except IndexError:
-                    post.linkToMore = ''
-                except NoSuchElementException:
-                    # prob a shared post inside another post... 
-                    post.linkToMore = ''
-                    continue
-                if post not in posts:
+                print("Debug: article index: ", articles.index(article))
+                post = self.parseFacebookArticle(article)
+                if(post is not None):
                     posts.append(post)
             try:
                 more = self.find_element_by_partial_link_text(
@@ -212,7 +237,7 @@ class FacebookBot(webdriver.Chrome):
             # self.find_element_by_partial_link_text(moreText)
             except Exception as e:
                 print(e)
-                print(" Can't get more posts")
+                print("Can't get more posts")
         return posts
 
     def getGroupMembers(self, url, deep=3, start=0):
@@ -249,9 +274,8 @@ class FacebookBot(webdriver.Chrome):
         return members
 
     def getPostInProfile(self, profileURL, deep=3, moreText="Visa fler inlägg"):
-        """Return a list of Posts in a profile/fanpage , setup the "moreText" using your language, theres not elegant way to handle that"""
-        posts = []
-
+        """Return a list of Posts in a profile/fanpage , setup the "moreText" 
+        using your language, theres not elegant way to handle that"""
         #url = '{}?v=timeline'.format(profileURL)
         params = {'v':'timeline'}
         url_parts = list(urlparse.urlparse(profileURL))
@@ -259,56 +283,24 @@ class FacebookBot(webdriver.Chrome):
         query.update(params)
         url_parts[4] = urlencode(query)
         url = urlparse.urlunparse(url_parts)
+        posts = []
 
-        self.get(url)
+        try: 
+            self.get(url)
+        except Exception as e:
+            print(e.__doc__)
+            print(e.message)
+            print("""wtf exception is this TimeoutError? Catch it and remove 
+                this except Exception as e to a explicit catch""")
+            return posts
 
         for d in range(deep):
             try:
                 articles = self.find_elements_by_xpath("//div[@role='article']")
-                for p in articles:
-                    post = Post()
+                for article in articles:
                     try:
-                        a = p.find_elements_by_tag_name("a")
-                        post.posterName = a[0].text
-                        try:
-                            post.numLikes = int(a[4].text.split(" ")[0])
-                        except ValueError:
-                            post.numLikes = 0
-                        except IndexError:
-                            post.numLikes = 0
-                        try: 
-                            post.text = p.find_element_by_tag_name("p").text
-                        except NoSuchElementException:
-                            post.text = ''
-                        try:
-                            post.time = p.find_element_by_tag_name("abbr").text
-                        except NoSuchElementException:
-                            post.time = '' 
-                        # p.text.split("· ")[1].split("\n")[0]
-                        post.privacy = self.title
-                        post.posterLink = a[0].get_attribute('href')
-                        # p.find_element_by_class_name("du").get_attribute('href')
-                        try:
-                            post.linkToComment = a[2].get_attribute('href')
-                        except IndexError:
-                            post.linkToComment = ''
-                        try:
-                            post.linkToLike = a[4].get_attribute('href')
-                        except IndexError: 
-                            post.linkToLike = ''
-                        try:
-                            post.numComents = int(a[5].text.split(" ")[0])
-                        except ValueError:
-                            post.numComents = 0
-                        except IndexError: 
-                            post.numComents = 0
-                        # post.linkToShare = a[5].get_attribute('href')
-                        post.linkToLikers = a[1].get_attribute('href')
-                        try:
-                            post.linkToMore = a[6].get_attribute('href')
-                        except IndexError:
-                            post.linkToMore = ''
-                        if post not in posts:
+                        post = self.parseFacebookArticle(article)
+                        if(post is not None):
                             posts.append(post)
                     except Exception as e:
                         print("1p ERROR: " + str(e))
@@ -329,30 +321,32 @@ class FacebookBot(webdriver.Chrome):
 
         return posts
 
-    def getCommentsOnPost(self, url, deep=3, moreText="Visa fler svar"):
+    def getFullPostWithComments(self, url, deep=3, moreText="Visa fler svar",\
+     likersText='lämnat reaktioner inklusive'):
         """ Get all Comments on a post returned as a list of posts """
         self.get(url)
-
-        main_story_element = self.find_element_by_xpath("//div[contains(@class, 'z ba')]")
-        main_post_info = main_story_element.get_attribute("data-ft")
-        main_story_data = json.loads(main_post_info)
-        main_story_poster = main_story_element.find_element_by_xpath("//h3")
-
-
         posts_collected = []
+        try: 
+            main_story_element = self.find_element_by_xpath(\
+                "//div[contains(@class, 'z ba')]")
+        except NoSuchElementException:
+            return posts_collected
 
-        post = Post()
-        post.postId = main_story_data['top_level_post_id']
-        post.pageId = main_story_data['page_id']
-
-        unix_time = main_story_data['page_insights'][str(main_story_data['page_id'])]['post_context']['publish_time']
-        post.time  = datetime.datetime.fromtimestamp(
-                int(unix_time)
-            ).strftime('%Y-%m-%d %H:%M:%S')
+        post = self.parseDataft(main_story_element.get_attribute("data-ft"))   
+        
         post.poster = main_story_element.find_element_by_xpath("//h3").text
         post.posterLink = main_story_element.find_element_by_xpath("//h3")\
                 .find_element_by_tag_name("a").get_attribute("href")
         post.text = main_story_element.text
+        # Part of the text string next to the likes link
+        try: 
+            like_link_element = self.find_element_by_xpath(
+                "//a[./div/div[contains(@aria-label, '" + likersText + "')]]")
+            post.linkToLikers  = like_link_element.get_attribute("href")
+        except: 
+            print("no link to likers")
+            post.linkToLikers = ''
+
         posts_collected.append(post)
 
         # Comments
@@ -363,29 +357,34 @@ class FacebookBot(webdriver.Chrome):
         for e in number_ids:
             try:
                 ep = int(e.get_attribute('id'))
-                print(ep, "seems like a comment!")
+                #print(ep, "seems like a comment!")
                 comment_elements.append(e)
             except ValueError: 
                 #print("thats not a comment element, not an int -- continue")
                 continue
 
-        for comment in comment_elements: 
-            post = Post()
-            post.pageId = main_story_data['page_id']
-            post.postId = main_story_data['top_level_post_id']
-            post.commentId = comment.get_attribute("id")
+        for comment_element in comment_elements: 
+            comment = Post()
+            comment.pageId = post.pageId
+            comment.postId = post.postId
+            comment.commentId = comment_element.get_attribute("id")
             try: 
-                post.posterName = comment.find_element_by_tag_name("h3").text
-                post.posterLink = comment.find_element_by_tag_name("h3").find_element_by_tag_name("a").get_attribute("href")
+                comment.posterName = comment_element.find_element_by_tag_name("h3").text
+                comment.posterLink = comment_element.find_element_by_tag_name("h3")\
+                .find_element_by_tag_name("a").get_attribute("href")
             except NoSuchElementException:
                 # Has no h3 => is prob a subcomment
                 continue
             try: 
-                post.time = comment.find_element_by_tag_name("abbr").text
+                comment.time = facebookDateTimeConverter(comment_element\
+                    .find_element_by_tag_name("abbr").text)
+                comment.timetext = comment_element.find_element_by_tag_name("abbr").text
             except NoSuchElementException:
                 continue
-            post.text = comment.text
-            posts_collected.append(post)
+            except ValueError:
+                comment.time = None
+            comment.text = comment_element.text
+            posts_collected.append(comment)
 
         # TODO: Click show more answers button
         # looks like => id="see_next_1845692485515656"
@@ -393,12 +392,168 @@ class FacebookBot(webdriver.Chrome):
         return posts_collected
 
     def getProfilesFromPosts(self, posts):
-        """ Get unique profiles from a list of posts """
+        """ Get unique (by name) Profiles from a list of Posts """
+        posternames = [] # unique
         profiles = []
         for post in posts:
-            profile = Profile()
-            profile.name = post.posterName
-            profile.profileLink = post.posterLink
-            if(profile not in profiles):
+            if post.posterName not in posternames: 
+                profile = Profile()
+                profile.name = post.posterName
+                profile.profileLink = post.posterLink
                 profiles.append(profile)
+                posternames.append(post.posterName)
         return profiles
+
+    def getProfilesFromLikes(self, likes_url, moreText='Visa mer',\
+        profiles=[]):
+        """ 
+        Get Profiles from a page where a Posts likes are listed. 
+        Recusive method calls itself if there are more likes in more button
+        """
+        self.get(likes_url)
+        profile_elements = self.find_elements_by_tag_name("li")
+
+        for pe in profile_elements:
+            profile = Profile()
+            try:
+                profile_link_element = pe.find_element_by_xpath(".//h3/a")
+            except NoSuchElementException:
+                # were at more button
+                break
+            profile.name = profile_link_element.text
+            profile.profileLink = profile_link_element.get_attribute("href")
+            profiles.append(profile)
+        try: 
+            more_link = self.find_element_by_link_text('Visa mer').get_attribute("href")
+            par = urllib.parse.parse_qs(urlparse.urlparse(more_link).query)
+            # set limit to the count
+            params = {'limit':par['total_count'][0]}
+            url_parts = list(urllib.parse.urlparse(more_link))
+            query = dict(urllib.parse.parse_qsl(url_parts[4]))
+            query.update(params)
+            url_parts[4] = urllib.parse.urlencode(query)
+            url_all_likes = urllib.parse.urlunparse(url_parts)
+            return self.getProfilesFromLikes(likes_url=url_all_likes, profiles=profiles)
+        except NoSuchElementException: 
+            # no "show more" link / button
+            print("no show more link / button when searching likes list")
+            return profiles
+        
+    def parseFacebookArticle(self, article):
+        """
+        Parse a facebook article get a Post in return. 
+
+        Takes:   Article, a selenium web object
+        Returns: Post
+        """
+        dataft = article.get_attribute("data-ft")
+        
+        if(dataft is not None):
+            post = self.parseDataft(dataft)
+        else:
+            # if no data-ft attribute is found this is probably an embedded
+            # shared post in another post. both are articles and thereby 
+            # passed through if iterated over articles. 
+            return None
+
+        if(post.time is None):
+            try: 
+                post.time = facebookDateTimeConverter(article\
+                    .find_element_by_tag_name("abbr").text)
+                post.timetext = article.find_element_by_tag_name("abbr").text
+            except NoSuchElementException:
+                post.time = None
+            except ValueError:
+                post.time = None
+
+        post.story = article.find_elements_by_tag_name("h3")[0].text
+        a = article.find_elements_by_tag_name("a")
+        post.posterName = a[0].text
+        try:
+            post.numLikes = article.find_element_by_xpath(\
+                "//a[contains(@aria-label, '" + 'reaktioner, inklusive'\
+                + "')]").text
+        except ValueError:
+            post.numLikes = 0
+        except IndexError:
+            post.numLikes = 0
+        except NoSuchElementException:
+            post.numLikes = 0
+            
+        try: 
+            post.text = article.find_element_by_tag_name("p").text
+        except NoSuchElementException:
+            post.text = ''
+        #post.privacy = self.title
+        post.posterLink = a[0].get_attribute('href')   
+        try:
+            post.linkToComment = a[2].get_attribute('href')
+        except IndexError:
+            post.linkToComment = ''
+        try:
+            post.linkToLike = a[4].get_attribute('href')
+        except IndexError: 
+            post.linkToLike = ''
+
+        # TODO: comments count does not work
+        try:
+            post.numComments = int(a[5].text.split(" ")[0])
+        except ValueError:
+            post.numComments = 0
+        except IndexError: 
+            post.numComments = 0
+        post.linkToLikers = a[1].get_attribute('href')
+        try:
+            post.linkToMore = article.find_element_by_link_text(\
+                'Visa hela händelsen').get_attribute("href")
+        except IndexError:
+            post.linkToMore = ''
+
+        # embedded article indicates shared post
+        embedded_articles = article.find_elements_by_xpath(\
+            ".//div[@role='article']")
+        if(len(embedded_articles) > 0):
+            # Add shared post contents
+            post.text = post.text + 'Shared content:\n' + embedded_articles[0].text
+            post.isShare = 1
+
+        return post
+
+    def parseDataft(self, dataft):
+        """
+        Parse datafield and return post filled with values from dataft.
+        
+        Takes:   data-ft attribute value (string)
+        Returns: Post
+        """
+        post = Post()
+        data = json.loads(dataft)
+
+        if('top_level_post_id' in data):
+            post.postId = data['top_level_post_id']
+
+        if('page_id' in data):
+            post.pageId = data['page_id']
+
+
+        if('page_insights' in data):
+            if('post_context' in data):
+                unix_time = data['page_insights'][str(\
+                    data['page_id'])]['post_context']['publish_time']
+                post.time  = datetime.datetime.fromtimestamp(
+                        int(unix_time)
+                    ).strftime('%Y-%m-%d %H:%M:%S')
+                post.timetext = unix_time
+            post.isShare = data['page_insights'][str(\
+                data['page_id'])]['dm']['isShare']
+
+        if('photo_attachments_list' in data):
+            post.images = data['photo_attachments_list']
+        
+        if('photo_id' in data):
+            post.images.append(data['photo_id'])
+
+        if('original_content_id' in data):
+            post.originalContentId = data['original_content_id']
+
+        return post
