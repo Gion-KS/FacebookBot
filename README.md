@@ -3,7 +3,7 @@
 =======================
 
 A simple library to automatize facebook without the official API
-All the functions are made scrapping and parsing mbasic.facebook.com
+All the functions are made scraping and parsing mbasic.facebook.com
 
 ## Available functions:
 
@@ -25,8 +25,7 @@ allpost=bot.getPostInProfile("https://mbasic.facebook.com/profile.php?fref=pb",d
 for p in allpost:
 	print(p)
 ```
-## Installing
-pip install FacebookWebBot
+
 ## Know issues:
 
     * Images
