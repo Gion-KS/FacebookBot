@@ -22,34 +22,86 @@ def mfacebookToBasic(url):
     else:
         return url
 
+def postsToJsonFile(posts, filename, path='fb_posts'):
+    """
+    Takes a list of Post and writes to file. 
+    """
+    with open(( path + filename + '.json'), 'w') as f:
+        for post in posts:
+            f.write(Post.to_json(post))
+            f.write('\n')
+
 def facebookDateTimeConverter(date_string):
     """ Function to convert strings containing date from facebook and convert
     them to datetime format. 
-    Function is language dependent and currently implemented for Swedish. 
-
-    Does not cover : 
-    * 1å (1 year), 
-    * 10d (10 days)
-    * 1 jan
     """
-    now = datetime.datetime.now()
-    # remove microseconds for compability with mysql
-    now = now.replace(microsecond=0)
-    months_of_the_year = ['januari','februari','mars','april','maj','juni',\
-    'juli','augusti','september','oktober','november','december']
+    now = datetime.datetime.now().replace(microsecond=0)
 
+    #November 4 at 2:00 PM
+    try:
+        date = datetime.datetime.strptime(date_string, '%B %d, %Y at %I:%M %p')
+        return date
+    except ValueError:
+        pass
 
-    if('tim' in date_string or ' h' in date_string):
+    #November 4, 2014 at 2:00 PM
+    try:
+        date = datetime.datetime.strptime(date_string, '%B %d at %I:%M %p')\
+        .replace(year=now.year)
+        return date
+    except ValueError:
+        pass
+
+    #Aug 22 at 1:55 PM        
+    try:
+        date = datetime.datetime.strptime(date_string, '%b %d at %I:%M %p')
+        return date.replace(year=now.year)
+    except ValueError:
+        pass
+
+    #Aug 22, 2013 at 1:55 PM        
+    try:
+        date = datetime.datetime.strptime(date_string, '%b %d, %Y at %I:%M %p')
+        return date
+    except ValueError:
+        pass
+
+    #Tuesday at 9:38 AM      
+    try:
+        time = datetime.datetime.strptime(date_string, '%A at %I:%M %p')
+        # this is ugly but if it passes it indicates the day before yesterday
+        date = now.replace(hour=time.hour, minute=time.minute, second=0)\
+         - datetime.timedelta(days=2)
+        return date
+    except ValueError:
+        pass
+
+    #Aug 22        
+    try:
+        date = datetime.datetime.strptime(date_string, '%b %d')
+        return date.replace(year=now.year)
+    except ValueError:
+        pass
+
+ 
+    shortHourText = 'hrs'
+    shortMinText = 'min'
+    justNowText = 'Just now'
+    yesterdayText = 'Yesterday'
+ 
+    # Set date to 1900 0101 if we get no other date...
+    date = datetime.datetime.strptime('Tuesday at 12:00 AM', '%A at %I:%M %p')
+    if(shortHourText in date_string or ' h' in date_string):
         if(len(date_string.split(' ')) > 2):
             # longer format -- e.g. "för 6 timmar sedan"
             hours_ago = int(date_string.split(' ')[1])
         else:
-            # short format -- eg. "6 tim" or "6 h"
+            # short format -- eg. "6 hrs" or "6 h"
             hours_ago = int(date_string.split(' ')[0])
         date = now-datetime.timedelta(hours=hours_ago)
-    elif('Alldeles nyss' in date_string):
+    elif(justNowText in date_string):
         date = now
-    elif('min' in date_string):
+    elif(shortMinText in date_string):
         if(len(date_string.split(' ')) > 2):
             # longer format -- e.g. "för 6 timmar sedan"
             minutes_ago = int(date_string.split(' ')[1])
@@ -57,28 +109,12 @@ def facebookDateTimeConverter(date_string):
             # short format -- eg. 6 tim
             minutes_ago = int(date_string.split(' ')[0])
         date = now-datetime.timedelta(minutes=minutes_ago)
-    elif("Igår" in date_string): 
+    elif(yesterdayText in date_string): 
         # Yesterday
-        hour = int(date_string.split(' ')[2].split(':')[0])
-        minute = int(date_string.split(' ')[2].split(':')[1])
-        dateholder = datetime.datetime(year=now.year, month=now.month,\
-        day=now.day, hour=hour, minute=minute )
-        date = dateholder-datetime.timedelta(hours = 24)
-    else:
-        day = int(date_string.split(' ')[0])
-        month = months_of_the_year.index(date_string.split(' ')[1])+1
-        if(len(date_string.split(' ')) > 4): 
-           # posts from other years than the current one have the year in 
-           # the string
-           year = int(date_string.split(' ')[2])
-        else:
-            # posts from this year does not have the year in the string
-            year = now.year 
-        time = date_string.split('kl. ')[1]
-        hour = int(time.split(':')[0])
-        minute = int(time.split(':')[1])
-        date = datetime.datetime(year=year, month=month, day=day, hour=hour,\
-        minute=minute)
+        date = datetime.datetime.strptime(date_string, 'Yesterday at %I:%M %p') 
+        date = date.replace(year=now.year, month=now.month,day=now.day)
+        date = date-datetime.timedelta(hours = 24)
+
     return date
 
 class Profile():
@@ -202,11 +238,10 @@ class FacebookBot(webdriver.Chrome):
                 #self.find_element_by_class_name("bp").click()
             return logged_in()
 
-    def logout(self):
+    def logout(self, logoutText="Logout"):
         """Log out from Facebook"""
-        #  TODO: seems to be not working
-
-        url = "https://mbasic.facebook.com/logout.php?h=AffSEUYT5RsM6bkY&t=1446949608&ref_component=mbasic_footer&ref_page=%2Fwap%2Fhome.php&refid=7"
+        logout_element = self.find_element_by_partial_link_text(logoutText)
+        url = logout_element.get_attribute('href')
         try:
             self.get(url)
             return True
@@ -214,7 +249,34 @@ class FacebookBot(webdriver.Chrome):
             print("Failed to log out ->\n", e)
             return False
 
-    def getPostInGroup(self, url, deep=2, moreText="Visa fler"):
+    def is_language_english(self):
+        """ is facebook set to english? """
+        # go to timeline page
+        url = 'https://mbasic.facebook.com/'
+        if(self.current_url != url):
+            self.get(url)
+
+        # Check status update text
+        if(self.find_element_by_name("xc_message")\
+            .get_attribute('placeholder') == "What's on your mind?"):
+            return True
+        else: 
+            return False
+
+    def set_language_to_english(self):
+        """ Set session of facebook lang to eng (us)"""
+        if(self.is_language_english()):
+            return True
+        else:
+            self.get('https://mbasic.facebook.com/language.php')
+            # find english us
+            english_button = self.find_element_by_link_text('English (US)')
+            # click english us
+            self.get(english_button.get_attribute('href'))
+            return self.is_language_english()
+
+
+    def getPostInGroup(self, url, deep=2, moreText="Show more"):
         """Get a list of posts (list:Post) in group url(str) iterating 
         deep(int) times in the group
         pass moreText depending of your language, i couldn't find a elegant 
@@ -273,7 +335,7 @@ class FacebookBot(webdriver.Chrome):
         # print(len(members))
         return members
 
-    def getPostInProfile(self, profileURL, deep=3, moreText="Visa fler inlägg"):
+    def getPostInProfile(self, profileURL, deep=3, moreText="See More Stories"):
         """Return a list of Posts in a profile/fanpage , setup the "moreText" 
         using your language, theres not elegant way to handle that"""
         #url = '{}?v=timeline'.format(profileURL)
@@ -287,10 +349,12 @@ class FacebookBot(webdriver.Chrome):
 
         try: 
             self.get(url)
+        except TimeoutException as e:
+            print("Timeout profile page load!", e)
+            return posts
         except Exception as e:
-            print(e.__doc__)
-            print(e.message)
-            print("""wtf exception is this TimeoutError? Catch it and remove 
+            print(e)
+            print("""What exception is this TimeoutError/excep.? Catch it and remove 
                 this except Exception as e to a explicit catch""")
             return posts
 
@@ -321,8 +385,8 @@ class FacebookBot(webdriver.Chrome):
 
         return posts
 
-    def getFullPostWithComments(self, url, deep=3, moreText="Visa fler svar",\
-     likersText='lämnat reaktioner inklusive'):
+    def getFullPostWithComments(self, url, deep=3, moreText="View more comments",\
+     likersText=' left reactions including '):
         """ Get all Comments on a post returned as a list of posts """
         self.get(url)
         posts_collected = []
@@ -404,7 +468,7 @@ class FacebookBot(webdriver.Chrome):
                 posternames.append(post.posterName)
         return profiles
 
-    def getProfilesFromLikes(self, likes_url, moreText='Visa mer',\
+    def getProfilesFromLikes(self, likes_url, moreText='See More',\
         profiles=[]):
         """ 
         Get Profiles from a page where a Posts likes are listed. 
@@ -424,7 +488,7 @@ class FacebookBot(webdriver.Chrome):
             profile.profileLink = profile_link_element.get_attribute("href")
             profiles.append(profile)
         try: 
-            more_link = self.find_element_by_link_text('Visa mer').get_attribute("href")
+            more_link = self.find_element_by_link_text(moreText).get_attribute("href")
             par = urllib.parse.parse_qs(urlparse.urlparse(more_link).query)
             # set limit to the count
             params = {'limit':par['total_count'][0]}
@@ -439,9 +503,9 @@ class FacebookBot(webdriver.Chrome):
             print("no show more link / button when searching likes list")
             return profiles
         
-    def parseFacebookArticle(self, article):
+    def parseFacebookArticle(self, article, fullStoryText="Full Story", reactionsText=" reactions, including "):
         """
-        Parse a facebook article get a Post in return. 
+        u a facebook article get a Post in return. 
 
         Takes:   Article, a selenium web object
         Returns: Post
@@ -471,15 +535,14 @@ class FacebookBot(webdriver.Chrome):
         post.posterName = a[0].text
         try:
             post.numLikes = article.find_element_by_xpath(\
-                "//a[contains(@aria-label, '" + 'reaktioner, inklusive'\
-                + "')]").text
+                "//a[contains(@aria-label, '" + reactionsText + "')]").text
         except ValueError:
             post.numLikes = 0
         except IndexError:
             post.numLikes = 0
         except NoSuchElementException:
             post.numLikes = 0
-            
+
         try: 
             post.text = article.find_element_by_tag_name("p").text
         except NoSuchElementException:
@@ -505,7 +568,7 @@ class FacebookBot(webdriver.Chrome):
         post.linkToLikers = a[1].get_attribute('href')
         try:
             post.linkToMore = article.find_element_by_link_text(\
-                'Visa hela händelsen').get_attribute("href")
+                fullStoryText).get_attribute("href")
         except IndexError:
             post.linkToMore = ''
 
@@ -535,9 +598,8 @@ class FacebookBot(webdriver.Chrome):
         if('page_id' in data):
             post.pageId = data['page_id']
 
-
         if('page_insights' in data):
-            if('post_context' in data):
+            if('post_context' in data['page_insights'][str(data['page_id'])]):
                 unix_time = data['page_insights'][str(\
                     data['page_id'])]['post_context']['publish_time']
                 post.time  = datetime.datetime.fromtimestamp(
