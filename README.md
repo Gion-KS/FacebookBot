@@ -1,15 +1,15 @@
 # FacebookWebBot
-A simple library to automatize facebook without the official API
+A simple library to collect data from facebook without the official API
 All the functions are made scraping and parsing mbasic.facebook.com
 
-Implemented to work with facebook language set to english. 
+Made to work with facebook language set to english. 
 
 Tested with Chrome webdriver. 
 
 ## Available functions:
     Login
     Logout
-    Set language to english
+    Set facebook language to english
     Check if facebook language is set to english
 	Get short versions of text of posts in profile/fanpage/group, includes images and like count
 	Get full version of a post or story and some of the comments, includes images and like count
@@ -32,6 +32,8 @@ postsToJsonFile(posts_and_comments, filename=('posts_and_comments', path='folder
 
 ## Know issues:
     * Timeout on pages where images won't load.
+    * Not getting date from all posts
+    * Full posts: Story, from who, to who, text sometimes gone. 
 
 ## Dependencies:
     * Python 3.4

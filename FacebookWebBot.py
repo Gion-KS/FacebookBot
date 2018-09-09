@@ -1,6 +1,7 @@
 # coding: utf-8
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.keys import Keys
 import time
 import json
@@ -89,16 +90,10 @@ def facebookDateTimeConverter(date_string):
         return date
     except ValueError:
         pass
-
- 
-    shortHourText = 'hrs'
-    shortMinText = 'min'
-    justNowText = 'Just now'
-    yesterdayText = 'Yesterday'
  
     # Set date to 1900 0101 if we get no other date...
     date = datetime.datetime.strptime('Tuesday at 12:00 AM', '%A at %I:%M %p')
-    if(shortHourText in date_string or ' h' in date_string):
+    if('hrs' in date_string or ' h' in date_string):
         if(len(date_string.split(' ')) > 2):
             # longer format -- e.g. "för 6 timmar sedan"
             hours_ago = int(date_string.split(' ')[1])
@@ -106,9 +101,9 @@ def facebookDateTimeConverter(date_string):
             # short format -- eg. "6 hrs" or "6 h"
             hours_ago = int(date_string.split(' ')[0])
         date = now-datetime.timedelta(hours=hours_ago)
-    elif(justNowText in date_string):
+    elif('Just now' in date_string):
         date = now
-    elif(shortMinText in date_string):
+    elif('min' in date_string):
         if(len(date_string.split(' ')) > 2):
             # longer format -- e.g. "för 6 timmar sedan"
             minutes_ago = int(date_string.split(' ')[1])
@@ -116,7 +111,7 @@ def facebookDateTimeConverter(date_string):
             # short format -- eg. 6 tim
             minutes_ago = int(date_string.split(' ')[0])
         date = now-datetime.timedelta(minutes=minutes_ago)
-    elif(yesterdayText in date_string): 
+    elif('Yesterday' in date_string): 
         # Yesterday
         date = datetime.datetime.strptime(date_string, 'Yesterday at %I:%M %p') 
         date = date.replace(year=now.year, month=now.month,day=now.day)
@@ -293,7 +288,8 @@ class FacebookBot(webdriver.Chrome):
         posts = []
         try:
             self.get(url)
-        except Exception as e:
+        except TimeoutException as e:
+            print(url)
             print(e)
             return posts
 
@@ -307,11 +303,7 @@ class FacebookBot(webdriver.Chrome):
             except NoSuchElementException as e: 
                 print(e)
                 pass
-            except Exception as e:
-                #NameError: name 'TimeoutException' is not defined
-                print(e)
-                print('article timeout')
-
+            
             # try different "more posts" texts to find link
             more = None
             try:
@@ -330,10 +322,10 @@ class FacebookBot(webdriver.Chrome):
             if(more):
                 try:                    
                     self.get(more.get_attribute('href'))
-                except Exception as e:
-                    print(e)
+                except TimeoutException as e:
                     print('Timeout (?) when pressing more button.')
                     print('Continue manually from : ', self.current_url)
+                    print(e)
                     return posts
             else:
                 print("Can't get more posts from this page. Finding no more posts button")
@@ -377,7 +369,12 @@ class FacebookBot(webdriver.Chrome):
     def getFullPostWithComments(self, url, deep=3, moreText="View more comments",\
      likersText=' left reactions including '):
         """ Get all Comments on a post returned as a list of posts """
-        self.get(url)
+        try: 
+            self.get(url)
+        except TimeoutException as e: 
+            print(url)
+            print(e)
+            return []
         posts_collected = []
         try: 
             #main_story_element = self.find_element_by_xpath(\
@@ -671,7 +668,3 @@ class FacebookBot(webdriver.Chrome):
         url_parts[4] = urlencode(query)
         url = urlparse.urlunparse(url_parts)
         return url
-
-
-
-
