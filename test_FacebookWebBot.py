@@ -59,6 +59,7 @@ class TestFacebookWebBot(unittest.TestCase):
                 minute=40, microsecond=0, second=0)-datetime.timedelta(days=1)\
             )
 
+
         # Sunday at 9:38 AM
         # Weekday only appears to be presented the day before yesterday
         """self.assertEqual(\
@@ -72,7 +73,8 @@ class TestFacebookWebBot(unittest.TestCase):
             datetime.datetime(year=this_year, month = 6, \
             day=9, hour=0, minute=0))
 
-
+        #Apr 13, 2014        
+        # TODO: testcase
 
 if __name__ == '__main__':
     unittest.main()

@@ -22,7 +22,7 @@ def mfacebookToBasic(url):
     else:
         return url
 
-def postsToJsonFile(posts, filename, path='fb_posts'):
+def postsToJsonFile(posts, filename, path='fb_posts/'):
     """
     Takes a list of Post and writes to file. 
     """
@@ -80,6 +80,13 @@ def facebookDateTimeConverter(date_string):
     try:
         date = datetime.datetime.strptime(date_string, '%b %d')
         return date.replace(year=now.year)
+    except ValueError:
+        pass
+
+    #Apr 13, 2014
+    try:
+        date = datetime.datetime.strptime(date_string, '%b %d, %Y')
+        return date
     except ValueError:
         pass
 
@@ -158,8 +165,11 @@ class Post():
         self.subCommentId = 0
         self.pageId = 0
         self.images = []
+        self.images_descriptions = []
+        self.images_urls = []
         self.originalContentId = 0
         self.isShare = 0
+        self.url = ""
 
         # possibly replace text with message and story
         self.message = ""
@@ -275,31 +285,60 @@ class FacebookBot(webdriver.Chrome):
             self.get(english_button.get_attribute('href'))
             return self.is_language_english()
 
-
-    def getPostInGroup(self, url, deep=2, moreText="Show more"):
-        """Get a list of posts (list:Post) in group url(str) iterating 
-        deep(int) times in the group
-        pass moreText depending of your language, i couldn't find a elegant 
-        solution for this"""
-
-        self.get(url)
+    def getShortPosts(self, url, deep=2):
+        """
+        Get a list of posts (list:Post) in group url(str) iterating 
+        deep(int) times in group, page or profile
+        """
         posts = []
+        try:
+            self.get(url)
+        except Exception as e:
+            print(e)
+            return posts
+
         for n in range(deep):
-            print("Searching, deep ",n)
-            articles = self.find_elements_by_xpath("//div[@role='article']")
-            for article in articles:
-                print("Debug: article index: ", articles.index(article))
-                post = self.parseFacebookArticle(article)
-                if(post is not None):
-                    posts.append(post)
             try:
-                more = self.find_element_by_partial_link_text(
-                    moreText).get_attribute('href')
-                self.get(more)
-            # self.find_element_by_partial_link_text(moreText)
-            except Exception as e:
+                articles = self.find_elements_by_xpath("//div[@role='article']")
+                for article in articles:
+                    post = self.parseFacebookArticle(article)
+                    if(post is not None):
+                        posts.append(post)
+            except NoSuchElementException as e: 
                 print(e)
-                print("Can't get more posts")
+                pass
+            except Exception as e:
+                #NameError: name 'TimeoutException' is not defined
+                print(e)
+                print('article timeout')
+
+            # try different "more posts" texts to find link
+            more = None
+            try:
+                more = self.find_element_by_partial_link_text("Show more")
+            except NoSuchElementException as e:
+                pass
+            try:
+                more = self.find_element_by_partial_link_text("See More Stories")
+            except NoSuchElementException as e:
+                pass
+            try:
+                more = self.find_element_by_partial_link_text("See More Posts")
+            except NoSuchElementException as e:
+                pass
+
+            if(more):
+                try:                    
+                    self.get(more.get_attribute('href'))
+                except Exception as e:
+                    print(e)
+                    print('Timeout (?) when pressing more button.')
+                    print('Continue manually from : ', self.current_url)
+                    return posts
+            else:
+                print("Can't get more posts from this page. Finding no more posts button")
+                break
+
         return posts
 
     def getGroupMembers(self, url, deep=3, start=0):
@@ -335,68 +374,34 @@ class FacebookBot(webdriver.Chrome):
         # print(len(members))
         return members
 
-    def getPostInProfile(self, profileURL, deep=3, moreText="See More Stories"):
-        """Return a list of Posts in a profile/fanpage , setup the "moreText" 
-        using your language, theres not elegant way to handle that"""
-        #url = '{}?v=timeline'.format(profileURL)
-        params = {'v':'timeline'}
-        url_parts = list(urlparse.urlparse(profileURL))
-        query = dict(urlparse.parse_qsl(url_parts[4]))
-        query.update(params)
-        url_parts[4] = urlencode(query)
-        url = urlparse.urlunparse(url_parts)
-        posts = []
-
-        try: 
-            self.get(url)
-        except TimeoutException as e:
-            print("Timeout profile page load!", e)
-            return posts
-        except Exception as e:
-            print(e)
-            print("""What exception is this TimeoutError/excep.? Catch it and remove 
-                this except Exception as e to a explicit catch""")
-            return posts
-
-        for d in range(deep):
-            try:
-                articles = self.find_elements_by_xpath("//div[@role='article']")
-                for article in articles:
-                    try:
-                        post = self.parseFacebookArticle(article)
-                        if(post is not None):
-                            posts.append(post)
-                    except Exception as e:
-                        print("1p ERROR: " + str(e))
-                # press more if more button exists
-                try:
-                    show_more_link_element = self.find_element_by_partial_link_text(moreText)
-                    show_more_link = show_more_link_element.get_attribute('href')
-                    self.get(show_more_link)
-                except NoSuchElementException:
-                    print('no more button')
-                    break
-
-            except TimeoutError as e:
-                print("2p Timeout:", str(e))
-                time.sleep(1)
-            except BaseException as e:
-                print("3p ERROR:", str(e))
-
-        return posts
-
     def getFullPostWithComments(self, url, deep=3, moreText="View more comments",\
      likersText=' left reactions including '):
         """ Get all Comments on a post returned as a list of posts """
         self.get(url)
         posts_collected = []
         try: 
-            main_story_element = self.find_element_by_xpath(\
-                "//div[contains(@class, 'z ba')]")
+            #main_story_element = self.find_element_by_xpath(\
+            #    "//div[contains(@class, 'z ba')]")
+            #main_story_element = self.find_element_by_id('m_story_permalink_view')
+            main_story_element = self.find_element_by_xpath("//div[contains(@data-ft, 'top_level_post_id')]")
         except NoSuchElementException:
             return posts_collected
 
-        post = self.parseDataft(main_story_element.get_attribute("data-ft"))   
+        dataft = main_story_element.get_attribute("data-ft")
+        if(dataft is not None):
+            post = self.parseDataft(main_story_element.get_attribute("data-ft")) 
+        else: 
+            post = Post()
+
+        if(post.time is None):
+            try: 
+                post.time = facebookDateTimeConverter(main_story_element\
+                    .find_element_by_tag_name("abbr").text)
+                post.timetext = main_story_element.find_element_by_tag_name("abbr").text
+            except NoSuchElementException:
+                post.time = None
+            except ValueError:
+                post.time = None
         
         post.poster = main_story_element.find_element_by_xpath("//h3").text
         post.posterLink = main_story_element.find_element_by_xpath("//h3")\
@@ -407,10 +412,14 @@ class FacebookBot(webdriver.Chrome):
             like_link_element = self.find_element_by_xpath(
                 "//a[./div/div[contains(@aria-label, '" + likersText + "')]]")
             post.linkToLikers  = like_link_element.get_attribute("href")
+            post.numLikes = like_link_element.text
         except: 
-            print("no link to likers")
+            #print("no link to likers")
             post.linkToLikers = ''
-
+            
+        # Check for images 
+        post = self.findFacebookImagesFromElement(main_story_element, post)
+        post.url=self.current_url
         posts_collected.append(post)
 
         # Comments
@@ -429,9 +438,12 @@ class FacebookBot(webdriver.Chrome):
 
         for comment_element in comment_elements: 
             comment = Post()
+            comment.url=self.current_url
             comment.pageId = post.pageId
             comment.postId = post.postId
             comment.commentId = comment_element.get_attribute("id")
+            # Check for images 
+            comment = self.findFacebookImagesFromElement(comment_element, comment)
             try: 
                 comment.posterName = comment_element.find_element_by_tag_name("h3").text
                 comment.posterLink = comment_element.find_element_by_tag_name("h3")\
@@ -452,6 +464,9 @@ class FacebookBot(webdriver.Chrome):
 
         # TODO: Click show more answers button
         # looks like => id="see_next_1845692485515656"
+        # How many comments has been collected? Likely to be more if we click?
+        # sometimes returns empty list of comments. count of collected 
+        # comments and count of see subcomments could be compared.  
 
         return posts_collected
 
@@ -510,6 +525,11 @@ class FacebookBot(webdriver.Chrome):
         Takes:   Article, a selenium web object
         Returns: Post
         """
+
+        # TODO : check if article is an "Suggested groups" box 
+        # Hint: They have no full story link
+        # Story = 'Suggested Groups'
+
         dataft = article.get_attribute("data-ft")
         
         if(dataft is not None):
@@ -535,7 +555,7 @@ class FacebookBot(webdriver.Chrome):
         post.posterName = a[0].text
         try:
             post.numLikes = article.find_element_by_xpath(\
-                "//a[contains(@aria-label, '" + reactionsText + "')]").text
+                ".//a[contains(@aria-label, '" + reactionsText + "')]").text
         except ValueError:
             post.numLikes = 0
         except IndexError:
@@ -571,6 +591,8 @@ class FacebookBot(webdriver.Chrome):
                 fullStoryText).get_attribute("href")
         except IndexError:
             post.linkToMore = ''
+        except NoSuchElementException:
+            post.linkToMore = ''
 
         # embedded article indicates shared post
         embedded_articles = article.find_elements_by_xpath(\
@@ -579,17 +601,21 @@ class FacebookBot(webdriver.Chrome):
             # Add shared post contents
             post.text = post.text + 'Shared content:\n' + embedded_articles[0].text
             post.isShare = 1
+        
+        post = self.findFacebookImagesFromElement(article, post)
 
         return post
 
-    def parseDataft(self, dataft):
+    def parseDataft(self, dataft, post=None):
         """
         Parse datafield and return post filled with values from dataft.
         
         Takes:   data-ft attribute value (string)
         Returns: Post
         """
-        post = Post()
+        if(post is None):
+            post = Post()
+
         data = json.loads(dataft)
 
         if('top_level_post_id' in data):
@@ -619,3 +645,33 @@ class FacebookBot(webdriver.Chrome):
             post.originalContentId = data['original_content_id']
 
         return post
+
+    def findFacebookImagesFromElement(self, element, post=None):
+        """ Find user uploaded images from element and add to Post """
+        if(post is None):
+            post = Post()
+        # Check for images 
+        try: 
+            images_elements = element.find_elements_by_xpath('.//img')
+            for image in images_elements:
+                if('Image may contain:' in image.get_attribute('alt')):
+                    post.images_urls.append(image.get_attribute('src'))
+                    post.images_descriptions.append(image.get_attribute('alt'))
+        except NoSuchElementException:
+            pass
+        return post
+
+    def getProfileTimeline(self, profileURL):
+        """From link to a facebook profile, return url to the profiles' 
+        timeline"""
+        params = {'v':'timeline'}
+        url_parts = list(urlparse.urlparse(profileURL))
+        query = dict(urlparse.parse_qsl(url_parts[4]))
+        query.update(params)
+        url_parts[4] = urlencode(query)
+        url = urlparse.urlunparse(url_parts)
+        return url
+
+
+
+
