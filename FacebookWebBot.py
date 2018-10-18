@@ -165,6 +165,7 @@ class Post():
         self.originalContentId = 0
         self.isShare = 0
         self.url = ""
+        self.source_page = ''
 
         # possibly replace text with message and story
         self.message = ""
@@ -209,6 +210,16 @@ class FacebookBot(webdriver.Chrome):
             # headless means no open chrome window
             options.add_argument('headless')
         webdriver.Chrome.__init__(self, executable_path=pathToWebdriver, chrome_options=options)
+
+    def _restartSession(self):
+        """ to get around timeout problem"""
+        print('restarting session.... ')
+        self.close()
+        self.__init__('C:/browserdrivers/chromedriver.exe')
+        self.set_page_load_timeout(60)
+        time.sleep(10)
+        self.login("username",'password')
+        time.sleep(10)
 
     def get(self, url):
         """The make the driver go to the url but reformat the url if is for facebook page"""
@@ -291,7 +302,14 @@ class FacebookBot(webdriver.Chrome):
         except TimeoutException as e:
             print(url)
             print(e)
-            return posts
+            # retry once
+            self._restartSession()
+            try: 
+                self.get(url)
+            except TimeoutException as e:
+                print('Still timed out: ', e)
+                return posts
+            #return posts
 
         for n in range(deep):
             try:
@@ -320,13 +338,20 @@ class FacebookBot(webdriver.Chrome):
                 pass
 
             if(more):
-                try:                    
-                    self.get(more.get_attribute('href'))
+                try:
+                    url = more.get_attribute('href')                    
+                    self.get(url)
                 except TimeoutException as e:
                     print('Timeout (?) when pressing more button.')
-                    print('Continue manually from : ', self.current_url)
                     print(e)
-                    return posts
+                    self._restartSession()
+                    try:
+                        self.get(url)
+                    except TimeoutException as e:
+                        print('Timeout AGAIN when pressing more button.')
+                        print('Last url tried ', url)
+                        print(e)
+                        return posts
             else:
                 print("Can't get more posts from this page. Finding no more posts button")
                 break
@@ -345,7 +370,6 @@ class FacebookBot(webdriver.Chrome):
         for d in range(start, start + deep):
             url = rg.replace("$n$", str(d * 30))
             self.get(url)
-            # print(self.current_url)
             p = self.find_elements_by_class_name("p")  # BK cada profile
             for b in p:
                 Profile = Profile()
@@ -374,6 +398,7 @@ class FacebookBot(webdriver.Chrome):
         except TimeoutException as e: 
             print(url)
             print(e)
+            self._restartSession()
             return []
         posts_collected = []
         try: 

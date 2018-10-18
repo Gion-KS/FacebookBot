@@ -112,3 +112,9 @@ target/
 
 # Vim temp files 
 *~
+
+
+# Sublime workspace files
+*.sublime-workspace
+*.sublime-project
+
