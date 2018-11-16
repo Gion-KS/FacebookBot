@@ -445,50 +445,19 @@ class FacebookBot(webdriver.Chrome):
         posts_collected.append(post)
 
         # Comments
-        #comment_elements = self.find_elements_by_class_name("dv")
-        comment_elements = []
-        number_ids = self.find_elements_by_xpath("//div[@id]")
-
-        for e in number_ids:
-            try:
-                ep = int(e.get_attribute('id'))
-                #print(ep, "seems like a comment!")
-                comment_elements.append(e)
-            except ValueError: 
-                #print("thats not a comment element, not an int -- continue")
-                continue
-
-        for comment_element in comment_elements: 
-            comment = Post()
-            comment.url=self.current_url
-            comment.pageId = post.pageId
-            comment.postId = post.postId
-            comment.commentId = comment_element.get_attribute("id")
-            # Check for images 
-            comment = self.findFacebookImagesFromElement(comment_element, comment)
+        comments = []
+        while(True):
+            comments = comments + self._getComments(post)
             try: 
-                comment.posterName = comment_element.find_element_by_tag_name("h3").text
-                comment.posterLink = comment_element.find_element_by_tag_name("h3")\
-                .find_element_by_tag_name("a").get_attribute("href")
-            except NoSuchElementException:
-                # Has no h3 => is prob a subcomment
-                continue
-            try: 
-                comment.time = facebookDateTimeConverter(comment_element\
-                    .find_element_by_tag_name("abbr").text)
-                comment.timetext = comment_element.find_element_by_tag_name("abbr").text
-            except NoSuchElementException:
-                continue
-            except ValueError:
-                comment.time = None
-            comment.text = comment_element.text
-            posts_collected.append(comment)
+                prev_comments_url = self.find_element_by_xpath("//div[@id='see_prev_{post_id}']/a".format(post_id=post.postId)).get_attribute('href')
+            except NoSuchElementException: 
+                # No more previous comments -- we've cought 'em all! 
+                break
+            self.get(prev_comments_url)
 
-        # TODO: Click show more answers button
-        # looks like => id="see_next_1845692485515656"
-        # How many comments has been collected? Likely to be more if we click?
-        # sometimes returns empty list of comments. count of collected 
-        # comments and count of see subcomments could be compared.  
+            posts_collected = posts_collected + comments
+
+        # TODO: subcomments
 
         return posts_collected
 
@@ -693,3 +662,47 @@ class FacebookBot(webdriver.Chrome):
         url_parts[4] = urlencode(query)
         url = urlparse.urlunparse(url_parts)
         return url
+
+    def _getComments(self, post):
+        comment_elements = self._getCommentElements()
+        comment_posts = []
+        for comment_element in comment_elements: 
+                comment = Post()
+                comment.url=self.current_url
+                comment.pageId = post.pageId
+                comment.postId = post.postId
+                comment.commentId = comment_element.get_attribute("id")
+                # Check for images 
+                comment = self.findFacebookImagesFromElement(comment_element, comment)
+                try: 
+                    comment.posterName = comment_element.find_element_by_tag_name("h3").text
+                    comment.posterLink = comment_element.find_element_by_tag_name("h3")\
+                    .find_element_by_tag_name("a").get_attribute("href")
+                except NoSuchElementException:
+                    # Has no h3 => is prob a subcomment
+                    continue
+                try: 
+                    comment.time = facebookDateTimeConverter(comment_element\
+                        .find_element_by_tag_name("abbr").text)
+                    comment.timetext = comment_element.find_element_by_tag_name("abbr").text
+                except NoSuchElementException:
+                    continue
+                except ValueError:
+                    comment.time = None
+                comment.text = comment_element.text
+                comment_posts.append(comment)
+        return comment_posts
+
+    def _getCommentElements(self):
+        comment_elements = []
+        number_ids = self.find_elements_by_xpath("//div[@id]")
+
+        for e in number_ids:
+            try:
+                ep = int(e.get_attribute('id'))
+                #print(ep, "seems like a comment!")
+                comment_elements.append(e)
+            except ValueError: 
+                #print("thats not a comment element, not an int -- continue")
+                continue
+        return comment_elements
