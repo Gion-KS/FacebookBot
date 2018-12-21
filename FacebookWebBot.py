@@ -211,14 +211,14 @@ class FacebookBot(webdriver.Chrome):
             options.add_argument('headless')
         webdriver.Chrome.__init__(self, executable_path=pathToWebdriver, chrome_options=options)
 
-    def _restartSession(self):
+    def _restartSession(self, username='username', password='password'):
         """ to get around timeout problem"""
         print('restarting session.... ')
         self.close()
         self.__init__('C:/browserdrivers/chromedriver.exe')
         self.set_page_load_timeout(60)
         time.sleep(10)
-        self.login("username",'password')
+        self.login(username, password)
         time.sleep(10)
 
     def get(self, url):
@@ -311,6 +311,18 @@ class FacebookBot(webdriver.Chrome):
                 return posts
             #return posts
 
+        # Have we been redirected to /home? 
+        # In that case proceed to next link
+        if('.facebook.com/home.php?' in self.current_url):
+            return posts
+
+        # are we on a profile page ? navigate to the timeline
+        try: 
+            timeline_url = self.find_element_by_xpath("//a[text()='Timeline']").get_attribute('href')
+            self.get(timeline_url)
+        except NoSuchElementException as e: 
+            pass
+
         for n in range(deep):
             try:
                 articles = self.find_elements_by_xpath("//div[@role='article']")
@@ -393,14 +405,19 @@ class FacebookBot(webdriver.Chrome):
     def getFullPostWithComments(self, url, deep=3, moreText="View more comments",\
      likersText=' left reactions including '):
         """ Get all Comments on a post returned as a list of posts """
+        posts_collected = []
         try: 
             self.get(url)
         except TimeoutException as e: 
             print(url)
             print(e)
             self._restartSession()
-            return []
-        posts_collected = []
+            return posts_collected
+        
+        # Have we been redirected to /home? 
+        # In that case proceed to next link
+        if('.facebook.com/home.php?' in self.current_url):
+            return posts_collected
         try: 
             #main_story_element = self.find_element_by_xpath(\
             #    "//div[contains(@class, 'z ba')]")
@@ -619,9 +636,10 @@ class FacebookBot(webdriver.Chrome):
             if('post_context' in data['page_insights'][str(data['page_id'])]):
                 unix_time = data['page_insights'][str(\
                     data['page_id'])]['post_context']['publish_time']
-                post.time  = datetime.datetime.fromtimestamp(
-                        int(unix_time)
-                    ).strftime('%Y-%m-%d %H:%M:%S')
+                if(unix_time != ''):
+                    post.time  = datetime.datetime.fromtimestamp(
+                            int(unix_time)
+                        ).strftime('%Y-%m-%d %H:%M:%S')
                 post.timetext = unix_time
             post.isShare = data['page_insights'][str(\
                 data['page_id'])]['dm']['isShare']
